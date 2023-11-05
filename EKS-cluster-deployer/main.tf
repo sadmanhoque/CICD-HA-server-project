@@ -19,7 +19,7 @@ resource "aws_eks_cluster" "example" {
 resource "aws_eks_fargate_profile" "example" {
   cluster_name           = aws_eks_cluster.example.name
   fargate_profile_name   = "example"
-  pod_execution_role_arn = aws_iam_role.example.arn
+  pod_execution_role_arn = aws_iam_role.fargate-profile-example.arn
   subnet_ids = [aws_subnet.main.id, aws_subnet.second.id]
 
   selector {
@@ -49,7 +49,7 @@ resource "aws_iam_role" "fargate-profile-example" {
 
 resource "aws_iam_role_policy_attachment" "example-AmazonEKSFargatePodExecutionRolePolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
-  role       = aws_iam_role.example.name
+  role       = aws_iam_role.fargate-profile-example.name
 }
 
 resource "aws_subnet" "main" {
