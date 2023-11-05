@@ -1,44 +1,48 @@
-
-resource "kubernetes_deployment" "my_app" {
+resource "kubernetes_deployment" "java" {
   metadata {
-    name = "my-app-deployment"
+    name = "microservice-deployment"
+    labels = {
+      app  = "sample-site"
+    }
   }
-
   spec {
-    replicas = 3
-
+    replicas = 2
+    selector {
+      match_labels = {
+        app  = "sample-site"
+      }
+    }
     template {
       metadata {
         labels = {
-          app = "my-app"
+          app  = "sample-site"
         }
       }
-
       spec {
         container {
-          image = "516532666009.dkr.ecr.ca-central-1.amazonaws.com/test-repo:latest"  # Replace with your ECR image URL
-          name  = "my-app-container"
-
-          # Add other container settings (ports, environment variables, etc.) as needed
+          image = "516532666009.dkr.ecr.ca-central-1.amazonaws.com/test-repo:latest"
+          name  = "sample-site-container"
+          port {
+            container_port = 3000
+         }
         }
       }
     }
   }
 }
-
-resource "kubernetes_service" "my_app" {
+resource "kubernetes_service" "java" {
+  depends_on = [kubernetes_deployment.java]
   metadata {
-    name = "my-app-service"
+    name = "sample-site-service"
   }
-
   spec {
     selector = {
-      app = "my-app"
+      app = "sample-site"
     }
-
     port {
-      port        = 80
-      target_port = 80
+      port        = 3000
+      target_port = 3000
     }
+    type = "LoadBalancer"
   }
 }
