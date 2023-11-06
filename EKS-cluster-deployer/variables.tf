@@ -1,5 +1,11 @@
-//variable "bucket_name" {
-//  description = "(Required) Creates a unique bucket name"
-//  type        = string
-//  default     = "sadman-test-bucket"
-//}
+variable "name" {
+  description = "(Required) Creates a unique cluster name"
+  type        = string
+  default     = "my-eks-cluster"
+}
+
+variable "environment" {
+  description = "(Required) Creates a unique cluster name"
+  type        = string
+  default     = "test"
+}

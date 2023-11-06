@@ -1,132 +1,237 @@
-resource "aws_eks_cluster" "example" {
-  name     = "example"
-  role_arn = aws_iam_role.example.arn
+# Setting up the networking services first
+resource "aws_vpc" "eks_vpc" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_subnet" "eks_subnets" {
+  count = 2
+  vpc_id     = aws_vpc.eks_vpc.id
+  cidr_block = element(["10.0.1.0/24", "10.0.2.0/24"], count.index)
+  availability_zone = element(["ca-central-1a", "ca-central-1b"], count.index)
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "public-subnet-${count.index}"
+  }
+}
+
+resource "aws_internet_gateway" "my_igw" {
+  vpc_id = aws_vpc.eks_vpc.id
+}
+
+resource "aws_route_table" "public_route" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.my_igw.id
+  }
+}
+
+resource "aws_route_table_association" "public_route_assoc" {
+  count = 2
+  subnet_id      = element(aws_subnet.eks_subnets[*].id, count.index)
+  route_table_id = aws_route_table.public_route.id
+}
+
+# Create a security group for EKS control plane
+/*resource "aws_security_group" "eks_control_plane_sg" {
+  name        = "eks-control-plane-sg"
+  description = "Security group for EKS control plane"
+  vpc_id      = aws_vpc.eks_vpc.id
+}
+
+# Inbound rule for the EKS control plane security group (only for demonstration purposes)
+resource "aws_security_group_rule" "eks_control_plane_ingress" {
+  type        = "ingress"
+  from_port   = 3000
+  to_port     = 3000
+  protocol    = "tcp"
+  cidr_blocks = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.eks_control_plane_sg.id
+}*/
+
+# Create the EKS cluster
+resource "aws_eks_cluster" "main" {
+  name     = "${var.name}-${var.environment}"
+  role_arn = aws_iam_role.eks_cluster_role.arn
+
+  enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
 
   vpc_config {
-    subnet_ids = [aws_subnet.main.id, aws_subnet.second.id]
+    subnet_ids = aws_subnet.eks_subnets[*].id
+    //security_group_ids = [aws_security_group.eks_control_plane_sg.id]
   }
 
-  # Ensure that IAM Role permissions are created before and deleted after EKS Cluster handling.
-  # Otherwise, EKS will not be able to properly delete EKS managed EC2 infrastructure such as Security Groups.
-  depends_on = [
-    aws_iam_role_policy_attachment.example-AmazonEKSClusterPolicy,
-    aws_iam_role_policy_attachment.example-AmazonEKSVPCResourceController,
-    aws_subnet.main,
-    aws_subnet.second,
-  ]
-}
-
-resource "aws_eks_fargate_profile" "example" {
-  cluster_name           = aws_eks_cluster.example.name
-  fargate_profile_name   = "example"
-  pod_execution_role_arn = aws_iam_role.fargate-profile-example.arn
-  subnet_ids = [aws_subnet.main.id, aws_subnet.second.id]
-
-  selector {
-    namespace = "example"
+  timeouts {
+    delete = "30m"
   }
 
   depends_on = [
-    aws_iam_role.fargate-profile-example,
-    aws_iam_role_policy_attachment.example-AmazonEKSFargatePodExecutionRolePolicy
+    //aws_security_group_rule.eks_control_plane_ingress,
+    aws_cloudwatch_log_group.eks_cluster,
+    aws_iam_role_policy_attachment.AmazonEKSClusterPolicy,
+    aws_iam_role_policy_attachment.AmazonEKSServicePolicy
   ]
 }
 
-resource "aws_iam_role" "fargate-profile-example" {
-  name = "eks-fargate-profile-example"
-
-  assume_role_policy = jsonencode({
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "eks-fargate-pods.amazonaws.com"
-      }
-    }]
-    Version = "2012-10-17"
-  })
+#IAM policy for cloudwatch logging on EKS cluster
+resource "aws_iam_policy" "AmazonEKSClusterCloudWatchMetricsPolicy" {
+  name   = "AmazonEKSClusterCloudWatchMetricsPolicy"
+  policy = <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": [
+                "cloudwatch:PutMetricData"
+            ],
+            "Resource": "*",
+            "Effect": "Allow"
+        }
+    ]
+}
+EOF
 }
 
-resource "aws_iam_role_policy_attachment" "example-AmazonEKSFargatePodExecutionRolePolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
-  role       = aws_iam_role.fargate-profile-example.name
+
+resource "aws_iam_policy" "AmazonEKSClusterNLBPolicy" {
+  name   = "AmazonEKSClusterNLBPolicy"
+  policy = <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": [
+                "elasticloadbalancing:*",
+                "ec2:CreateSecurityGroup",
+                "ec2:Describe*"
+            ],
+            "Resource": "*",
+            "Effect": "Allow"
+        }
+    ]
+}
+EOF
 }
 
-resource "aws_subnet" "main" {
-  vpc_id     = aws_vpc.main.id
-  cidr_block = "10.0.1.0/24"
-   availability_zone = data.aws_availability_zones.available.names[0]
+resource "aws_iam_role" "eks_cluster_role" {
+  name                  = "${var.name}-eks-cluster-role"
+  force_detach_policies = true
 
-  tags = {
-    Name = "Main"
-  }
-
-  depends_on = [
-    aws_vpc.main
-  ]
-}
-
-resource "aws_subnet" "second" {
-  vpc_id     = aws_vpc.main.id
-  cidr_block = "10.0.2.0/24"
-   availability_zone = data.aws_availability_zones.available.names[1]
-
-  tags = {
-    Name = "Second"
-  }
-
-  depends_on = [
-    aws_vpc.main
-  ]
-}
-
-resource "aws_vpc" "main" {
-  cidr_block       = "10.0.0.0/16"
-  instance_tenancy = "default"
-
-  tags = {
-    Name = "main"
-  }
-}
-
-resource "aws_iam_role" "example" {
-  name               = "eks-cluster-example"
-  assume_role_policy = data.aws_iam_policy_document.assume_role.json
-}
-
-resource "aws_iam_role_policy_attachment" "example-AmazonEKSClusterPolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = aws_iam_role.example.name
-}
-
-# Optionally, enable Security Groups for Pods
-# Reference: https://docs.aws.amazon.com/eks/latest/userguide/security-groups-for-pods.html
-resource "aws_iam_role_policy_attachment" "example-AmazonEKSVPCResourceController" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
-  role       = aws_iam_role.example.name
-}
-
-output "endpoint" {
-  value = aws_eks_cluster.example.endpoint
-}
-
-output "kubeconfig-certificate-authority-data" {
-  value = aws_eks_cluster.example.certificate_authority[0].data
-}
-
-data "aws_iam_policy_document" "assume_role" {
-  statement {
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["eks.amazonaws.com"]
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": [
+          "eks.amazonaws.com",
+          "eks-fargate-pods.amazonaws.com"
+          ]
+      },
+      "Action": "sts:AssumeRole"
     }
+  ]
+}
+POLICY
+}
 
-    actions = ["sts:AssumeRole"]
+resource "aws_iam_role_policy_attachment" "AmazonEKSClusterPolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.eks_cluster_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSServicePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
+  role       = aws_iam_role.eks_cluster_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSCloudWatchMetricsPolicy" {
+  policy_arn = aws_iam_policy.AmazonEKSClusterCloudWatchMetricsPolicy.arn
+  role       = aws_iam_role.eks_cluster_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSCluserNLBPolicy" {
+  policy_arn = aws_iam_policy.AmazonEKSClusterNLBPolicy.arn
+  role       = aws_iam_role.eks_cluster_role.name
+}
+
+#Cloudwatch log group
+resource "aws_cloudwatch_log_group" "eks_cluster" {
+  name              = "/aws/eks/${var.name}-${var.environment}/cluster"
+  retention_in_days = 30
+
+  tags = {
+    Name        = "${var.name}-${var.environment}-eks-cloudwatch-log-group"
+    Environment = var.environment
   }
 }
 
-data "aws_availability_zones" "available" {
-  state = "available"
+#Creating the node groups
+resource "aws_eks_node_group" "main" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "kube-system"
+  node_role_arn   = aws_iam_role.eks_node_group_role.arn
+  subnet_ids      = aws_subnet.eks_subnets[*].id
+
+  scaling_config {
+    desired_size = 4
+    max_size     = 4
+    min_size     = 4
+  }
+
+  instance_types  = ["t2.micro"]
+
+  tags = {
+    Name        = "${var.name}-${var.environment}-eks-node-group"
+    Environment = var.environment
+  }
+
+  # Ensure that IAM Role permissions are created before and deleted after EKS Node Group handling.
+  # Otherwise, EKS will not be able to properly delete EC2 Instances and Elastic Network Interfaces.
+  depends_on = [
+    aws_iam_role_policy_attachment.AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.AmazonEC2ContainerRegistryReadOnly,
+  ]
 }
+
+#IAM roles for the node group
+resource "aws_iam_role" "eks_node_group_role" {
+  name                  = "${var.name}-eks-node-group-role"
+  force_detach_policies = true
+
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": [
+          "ec2.amazonaws.com"
+          ]
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+POLICY
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.eks_node_group_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.eks_node_group_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.eks_node_group_role.name
+}
+
