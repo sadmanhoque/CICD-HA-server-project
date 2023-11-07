@@ -57,3 +57,25 @@ resource "kubernetes_deployment" "example" {
     }
   }
 }
+
+resource "kubernetes_service" "app" {
+  metadata {
+    name      = "service-2048"
+    namespace = "2048-game"
+  }
+  spec {
+    selector = {
+      app = kubernetes_deployment.app.metadata[0].labels.app
+    }
+
+    port {
+      port        = 80
+      target_port = 80
+      protocol    = "TCP"
+    }
+
+    type = "NodePort"
+  }
+
+  depends_on = [kubernetes_deployment.app]
+}

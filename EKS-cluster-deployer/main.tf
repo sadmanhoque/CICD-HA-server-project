@@ -14,6 +14,16 @@ resource "aws_subnet" "eks_subnets" {
   }
 }
 
+resource "aws_subnet" "private_subnet" {
+  count = 2
+  vpc_id     = aws_vpc.eks_vpc.id
+  cidr_block = element(["10.0.3.0/24", "10.0.4.0/24"], count.index)
+  availability_zone = element(["ca-central-1a", "ca-central-1b"], count.index)
+  tags = {
+    Name = "private-subnet-${count.index}"
+  }
+}
+
 resource "aws_internet_gateway" "my_igw" {
   vpc_id = aws_vpc.eks_vpc.id
 }
@@ -235,3 +245,49 @@ resource "aws_iam_role_policy_attachment" "AmazonEC2ContainerRegistryReadOnly" {
   role       = aws_iam_role.eks_node_group_role.name
 }
 
+#Fargate profile
+resource "aws_eks_fargate_profile" "main" {
+  cluster_name           = aws_eks_cluster.main.name
+  fargate_profile_name   = "fp-default"
+  pod_execution_role_arn = aws_iam_role.fargate_pod_execution_role.arn
+  subnet_ids             = aws_subnet.private_subnet.*.id
+
+  selector {
+    namespace = "default"
+  }
+
+  selector {
+    namespace = "2048-game"
+  }
+}
+
+#IAM role for fargate profile
+resource "aws_iam_role_policy_attachment" "AmazonEKSFargatePodExecutionRolePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
+  role       = aws_iam_role.fargate_pod_execution_role.name
+}
+
+resource "aws_iam_role" "fargate_pod_execution_role" {
+  name                  = "${var.name}-eks-fargate-pod-execution-role"
+  force_detach_policies = true
+
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": [
+          "eks.amazonaws.com",
+          "eks-fargate-pods.amazonaws.com"
+          ]
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+POLICY
+}
+
+#EKS Deployment
