@@ -1,48 +1,59 @@
-resource "kubernetes_deployment" "java" {
+resource "kubernetes_deployment" "example" {
   metadata {
-    name = "microservice-deployment"
+    name = "terraform-example"
     labels = {
-      app  = "sample-site"
+      test = "MyExampleApp"
     }
   }
+
   spec {
-    replicas = 2
+    replicas = 3
+
     selector {
       match_labels = {
-        app  = "sample-site"
+        test = "MyExampleApp"
       }
     }
+
     template {
       metadata {
         labels = {
-          app  = "sample-site"
+          test = "MyExampleApp"
         }
       }
+
       spec {
         container {
           image = "516532666009.dkr.ecr.ca-central-1.amazonaws.com/test-repo:latest"
-          name  = "sample-site-container"
-          port {
-            container_port = 3000
-         }
+          name  = "example"
+
+          resources {
+            limits = {
+              cpu    = "0.5"
+              memory = "512Mi"
+            }
+            requests = {
+              cpu    = "250m"
+              memory = "50Mi"
+            }
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 3000
+
+              http_header {
+                name  = "X-Custom-Header"
+                value = "Awesome"
+              }
+            }
+
+            initial_delay_seconds = 3
+            period_seconds        = 3
+          }
         }
       }
     }
-  }
-}
-resource "kubernetes_service" "java" {
-  depends_on = [kubernetes_deployment.java]
-  metadata {
-    name = "sample-site-service"
-  }
-  spec {
-    selector = {
-      app = "sample-site"
-    }
-    port {
-      port        = 3000
-      target_port = 3000
-    }
-    type = "LoadBalancer"
   }
 }
